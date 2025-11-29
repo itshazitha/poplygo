@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Session, Question } from '@/types'
+import toast from 'react-hot-toast'  // Add this import
 
 export default function HostDashboard() {
   const params = useParams()
@@ -39,42 +40,54 @@ export default function HostDashboard() {
     }
   }
 
-const fetchQuestions = async () => {
-  try {
-    const sessionData = await supabase
-      .from('sessions')
-      .select('id')
-      .eq('code', code)
-      .single()
+  const fetchQuestions = async () => {
+    try {
+      const sessionData = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('code', code)
+        .single()
 
-    if (sessionData.data) {
-      const { data, error } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('session_id', sessionData.data.id)
-        .eq('deleted', false)  // Add this line to filter out deleted questions
-        .order('upvotes', { ascending: false })
+      if (sessionData.data) {
+        const { data, error } = await supabase
+          .from('questions')
+          .select('*')
+          .eq('session_id', sessionData.data.id)
+          .eq('deleted', false)
+          .order('upvotes', { ascending: false })
 
-      if (error) throw error
-      setQuestions(data || [])
+        if (error) throw error
+        setQuestions(data || [])
+      }
+    } catch (error) {
+      console.error('Error fetching questions:', error)
     }
-  } catch (error) {
-    console.error('Error fetching questions:', error)
   }
-}
-
 
   const endSession = async () => {
+    if (!confirm('Are you sure you want to end this session? This cannot be undone.')) {
+      return
+    }
+
     try {
       const { error } = await supabase
         .from('sessions')
         .update({ active: false })
         .eq('code', code)
 
-      if (error) throw error
-      alert('Session ended successfully')
+      if (error) {
+        console.error('Error ending session:', error)
+        toast.error('Failed to end session. Please try again.')
+        return
+      }
+
+      toast.success('Session ended successfully!')
+      
+      // Refresh session data to show updated state
+      fetchSession()
     } catch (error) {
-      console.error('Error ending session:', error)
+      console.error('Unexpected error:', error)
+      toast.error('Something went wrong. Please try again.')
     }
   }
 
@@ -104,12 +117,22 @@ const fetchQuestions = async () => {
               <p className="text-gray-600">Session Code</p>
               <p className="text-4xl font-bold text-blue-600">{code}</p>
             </div>
-            <button
-              onClick={endSession}
-              className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
-            >
-              End Session
-            </button>
+            <div className="flex flex-col items-end gap-2">
+              <button
+                onClick={endSession}
+                disabled={!session.active}
+                className={`px-4 py-2 rounded-md transition ${
+                  session.active
+                    ? 'bg-red-600 text-white hover:bg-red-700'
+                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }`}
+              >
+                {session.active ? 'End Session' : 'Session Ended'}
+              </button>
+              {!session.active && (
+                <span className="text-sm text-gray-500">This session is inactive</span>
+              )}
+            </div>
           </div>
         </div>
 
