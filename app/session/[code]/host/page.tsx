@@ -39,28 +39,30 @@ export default function HostDashboard() {
     }
   }
 
-  const fetchQuestions = async () => {
-    try {
-      const sessionData = await supabase
-        .from('sessions')
-        .select('id')
-        .eq('code', code)
-        .single()
+const fetchQuestions = async () => {
+  try {
+    const sessionData = await supabase
+      .from('sessions')
+      .select('id')
+      .eq('code', code)
+      .single()
 
-      if (sessionData.data) {
-        const { data, error } = await supabase
-          .from('questions')
-          .select('*')
-          .eq('session_id', sessionData.data.id)
-          .order('upvotes', { ascending: false })
+    if (sessionData.data) {
+      const { data, error } = await supabase
+        .from('questions')
+        .select('*')
+        .eq('session_id', sessionData.data.id)
+        .eq('deleted', false)  // Add this line to filter out deleted questions
+        .order('upvotes', { ascending: false })
 
-        if (error) throw error
-        setQuestions(data || [])
-      }
-    } catch (error) {
-      console.error('Error fetching questions:', error)
+      if (error) throw error
+      setQuestions(data || [])
     }
+  } catch (error) {
+    console.error('Error fetching questions:', error)
   }
+}
+
 
   const endSession = async () => {
     try {

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Session, Question } from '@/types'
+import toast from 'react-hot-toast'  // Add this import
 
 export default function StudentSession() {
   const params = useParams()
@@ -51,6 +52,7 @@ export default function StudentSession() {
           .from('questions')
           .select('*')
           .eq('session_id', sessionData.data.id)
+          .eq('deleted', false)
           .order('upvotes', { ascending: false })
 
         if (error) throw error
@@ -98,6 +100,16 @@ export default function StudentSession() {
   }
 
   const handleUpvote = async (questionId: string, currentUpvotes: number) => {
+    // Check if user already upvoted this question
+    const upvotedQuestions = JSON.parse(
+      localStorage.getItem('upvoted_questions') || '[]'
+    )
+
+    if (upvotedQuestions.includes(questionId)) {
+      toast.error('You already upvoted this question')
+      return
+    }
+
     try {
       const { error } = await supabase
         .from('questions')
@@ -105,9 +117,16 @@ export default function StudentSession() {
         .eq('id', questionId)
 
       if (error) throw error
+
+      // Store upvote in localStorage
+      upvotedQuestions.push(questionId)
+      localStorage.setItem('upvoted_questions', JSON.stringify(upvotedQuestions))
+
+      toast.success('Question upvoted!')
       fetchQuestions()
     } catch (error) {
       console.error('Error upvoting:', error)
+      toast.error('Failed to upvote question')
     }
   }
 
@@ -177,22 +196,35 @@ export default function StudentSession() {
             <p className="text-gray-500 text-center py-8">No questions yet</p>
           ) : (
             <div className="space-y-4">
-              {questions.map((question) => (
-                <div key={question.id} className="border border-gray-200 rounded-lg p-4">
-                  <p className="text-lg mb-2">{question.content}</p>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-500">
-                      {question.author_name}
-                    </span>
-                    <button
-                      onClick={() => handleUpvote(question.id, question.upvotes)}
-                      className="px-3 py-1 bg-blue-100 text-blue-600 rounded-md hover:bg-blue-200 text-sm font-medium"
-                    >
-                      ▲ {question.upvotes}
-                    </button>
+              {questions.map((question) => {
+                // Check if user has already upvoted this question
+                const upvotedQuestions = JSON.parse(
+                  localStorage.getItem('upvoted_questions') || '[]'
+                )
+                const hasUpvoted = upvotedQuestions.includes(question.id)
+                
+                return (
+                  <div key={question.id} className="border border-gray-200 rounded-lg p-4">
+                    <p className="text-lg mb-2">{question.content}</p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-500">
+                        {question.author_name}
+                      </span>
+                      <button
+                        onClick={() => handleUpvote(question.id, question.upvotes)}
+                        disabled={hasUpvoted}
+                        className={`px-3 py-1 rounded-md text-sm font-medium transition ${
+                          hasUpvoted
+                            ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                            : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                        }`}
+                      >
+                        ▲ {question.upvotes} {hasUpvoted && '(Voted)'}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
