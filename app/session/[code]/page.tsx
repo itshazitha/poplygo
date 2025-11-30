@@ -4,11 +4,14 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Session, Question } from '@/types'
-import toast from 'react-hot-toast'  // Add this import
+import toast from 'react-hot-toast'
+import { withRetry, isNetworkError } from '@/lib/retry'
+import { useOnlineStatus } from '@/hooks/useOnlineStatus' 
 
 export default function StudentSession() {
   const params = useParams()
   const code = params.code as string
+  const isOnline = useOnlineStatus()  // Actually use the hook here
   
   const [session, setSession] = useState<Session | null>(null)
   const [questions, setQuestions] = useState<Question[]>([])
@@ -41,66 +44,94 @@ export default function StudentSession() {
 
   const fetchQuestions = async () => {
     try {
-      const sessionData = await supabase
-        .from('sessions')
-        .select('id')
-        .eq('code', code)
-        .single()
+      await withRetry(async () => {
+        const sessionData = await supabase
+          .from('sessions')
+          .select('id')
+          .eq('code', code)
+          .single()
 
-      if (sessionData.data) {
-        const { data, error } = await supabase
-          .from('questions')
-          .select('*')
-          .eq('session_id', sessionData.data.id)
-          .eq('deleted', false)
-          .order('upvotes', { ascending: false })
+        if (sessionData.data) {
+          const { data, error } = await supabase
+            .from('questions')
+            .select('*')
+            .eq('session_id', sessionData.data.id)
+            .eq('deleted', false)
+            .order('upvotes', { ascending: false })
 
-        if (error) throw error
-        setQuestions(data || [])
-      }
+          if (error) throw error
+          setQuestions(data || [])
+        }
+      }, {
+        maxRetries: 2,
+        onRetry: (attempt) => {
+          console.log(`Retrying fetch questions (attempt ${attempt})`)
+        }
+      })
     } catch (error) {
       console.error('Error fetching questions:', error)
+      if (isNetworkError(error)) {
+        toast.error('Connection issue. Retrying...')
+      }
     }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    if (!newQuestion.trim()) {
+      toast.error('Please enter a question')
+      return
+    }
+
+    if (newQuestion.length > 500) {
+      toast.error('Question must be less than 500 characters')
+      return
+    }
+
     setLoading(true)
 
     try {
-      const sessionData = await supabase
-        .from('sessions')
-        .select('id')
-        .eq('code', code)
-        .single()
+      await withRetry(async () => {
+        const sessionData = await supabase
+          .from('sessions')
+          .select('id')
+          .eq('code', code)
+          .single()
 
-      if (!sessionData.data) throw new Error('Session not found')
+        if (!sessionData.data) throw new Error('Session not found')
 
-      const { error } = await supabase
-        .from('questions')
-        .insert([
-          {
-            session_id: sessionData.data.id,
-            content: newQuestion,
-            author_name: authorName || 'Anonymous',
-            upvotes: 0
-          }
-        ])
+        const { error } = await supabase
+          .from('questions')
+          .insert([
+            {
+              session_id: sessionData.data.id,
+              content: newQuestion.trim(),
+              author_name: authorName.trim() || 'Anonymous',
+              upvotes: 0
+            }
+          ])
 
-      if (error) throw error
+        if (error) throw error
+      }, {
+        maxRetries: 2,
+        onRetry: (attempt) => {
+          toast.loading(`Retrying... (attempt ${attempt})`)
+        }
+      })
 
+      toast.success('Question submitted!')
       setNewQuestion('')
       fetchQuestions()
     } catch (error) {
       console.error('Error submitting question:', error)
-      alert('Failed to submit question')
+      toast.error('Failed to submit question. Please try again.')
     } finally {
       setLoading(false)
     }
   }
 
   const handleUpvote = async (questionId: string, currentUpvotes: number) => {
-    // Check if user already upvoted this question
     const upvotedQuestions = JSON.parse(
       localStorage.getItem('upvoted_questions') || '[]'
     )
@@ -118,7 +149,6 @@ export default function StudentSession() {
 
       if (error) throw error
 
-      // Store upvote in localStorage
       upvotedQuestions.push(questionId)
       localStorage.setItem('upvoted_questions', JSON.stringify(upvotedQuestions))
 
@@ -141,6 +171,13 @@ export default function StudentSession() {
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-4xl mx-auto">
+        {/* Offline Warning Banner - ADD THIS */}
+        {!isOnline && (
+          <div className="mb-4 bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-3 rounded">
+            ⚠️ You are offline. Some features may not work.
+          </div>
+        )}
+
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <h1 className="text-3xl font-bold mb-2">{session.title}</h1>
           <p className="text-gray-600">Session Code: {code}</p>
@@ -175,14 +212,18 @@ export default function StudentSession() {
                 placeholder="Type your question here..."
                 required
                 rows={4}
+                maxLength={500}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+              <p className="text-xs text-gray-500 mt-1">
+                {newQuestion.length}/500 characters
+              </p>
             </div>
 
             <button
               type="submit"
-              disabled={loading}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400"
+              disabled={loading || !isOnline}
+              className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
               {loading ? 'Submitting...' : 'Submit Question'}
             </button>
@@ -197,7 +238,6 @@ export default function StudentSession() {
           ) : (
             <div className="space-y-4">
               {questions.map((question) => {
-                // Check if user has already upvoted this question
                 const upvotedQuestions = JSON.parse(
                   localStorage.getItem('upvoted_questions') || '[]'
                 )
@@ -212,9 +252,9 @@ export default function StudentSession() {
                       </span>
                       <button
                         onClick={() => handleUpvote(question.id, question.upvotes)}
-                        disabled={hasUpvoted}
+                        disabled={hasUpvoted || !isOnline}
                         className={`px-3 py-1 rounded-md text-sm font-medium transition ${
-                          hasUpvoted
+                          hasUpvoted || !isOnline
                             ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
                             : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
                         }`}
