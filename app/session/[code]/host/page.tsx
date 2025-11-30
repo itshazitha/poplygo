@@ -56,32 +56,43 @@ export default function HostDashboard() {
     }
   }
 
-  const fetchQuestions = async () => {
+ const fetchQuestions = async () => {
+  // Only show loading on initial fetch
+  if (questions.length === 0) {
     setQuestionsLoading(true)
-    try {
-      const sessionData = await supabase
-        .from('sessions')
-        .select('id')
-        .eq('code', code)
-        .single()
-
-      if (sessionData.data) {
-        const { data, error } = await supabase
-          .from('questions')
-          .select('*')
-          .eq('session_id', sessionData.data.id)
-          .eq('deleted', false)
-          .order('upvotes', { ascending: false })
-
-        if (error) throw error
-        setQuestions(data || [])
-      }
-      setQuestionsLoading(false)
-    } catch (error) {
-      console.error('Error fetching questions:', error)
-      setQuestionsLoading(false)
-    }
   }
+  
+  try {
+    const sessionData = await supabase
+      .from('sessions')
+      .select('id')
+      .eq('code', code)
+      .single()
+
+    if (sessionData.data) {
+      const { data, error } = await supabase
+        .from('questions')
+        .select('*')
+        .eq('session_id', sessionData.data.id)
+        .eq('deleted', false)
+        .order('upvotes', { ascending: false })
+
+      if (error) throw error
+      
+      // Only update if data actually changed
+      const newData = data || []
+      const hasChanged = JSON.stringify(newData) !== JSON.stringify(questions)
+      
+      if (hasChanged) {
+        setQuestions(newData)
+      }
+    }
+    setQuestionsLoading(false)
+  } catch (error) {
+    console.error('Error fetching questions:', error)
+    setQuestionsLoading(false)
+  }
+}
 
   const endSession = async () => {
     if (!confirm('Are you sure you want to end this session? This cannot be undone.')) {

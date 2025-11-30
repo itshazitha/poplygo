@@ -59,42 +59,54 @@ export default function StudentSession() {
     }
   }
 
-  const fetchQuestions = async () => {
+const fetchQuestions = async () => {
+  // Only show loading on initial fetch
+  if (questions.length === 0) {
     setQuestionsLoading(true)
-    try {
-      await withRetry(async () => {
-        const sessionData = await supabase
-          .from('sessions')
-          .select('id')
-          .eq('code', code)
-          .single()
+  }
+  
+  try {
+    await withRetry(async () => {
+      const sessionData = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('code', code)
+        .single()
 
-        if (sessionData.data) {
-          const { data, error } = await supabase
-            .from('questions')
-            .select('*')
-            .eq('session_id', sessionData.data.id)
-            .eq('deleted', false)
-            .order('upvotes', { ascending: false })
+      if (sessionData.data) {
+        const { data, error } = await supabase
+          .from('questions')
+          .select('*')
+          .eq('session_id', sessionData.data.id)
+          .eq('deleted', false)
+          .order('upvotes', { ascending: false })
 
-          if (error) throw error
-          setQuestions(data || [])
+        if (error) throw error
+        
+        // Only update if data actually changed
+        const newData = data || []
+        const hasChanged = JSON.stringify(newData) !== JSON.stringify(questions)
+        
+        if (hasChanged) {
+          setQuestions(newData)
         }
-        setQuestionsLoading(false)
-      }, {
-        maxRetries: 2,
-        onRetry: (attempt) => {
-          console.log(`Retrying fetch questions (attempt ${attempt})`)
-        }
-      })
-    } catch (error) {
-      console.error('Error fetching questions:', error)
-      setQuestionsLoading(false)
-      if (isNetworkError(error)) {
-        toast.error('Connection issue. Retrying...')
       }
+      setQuestionsLoading(false)
+    }, {
+      maxRetries: 2,
+      onRetry: (attempt) => {
+        console.log(`Retrying fetch questions (attempt ${attempt})`)
+      }
+    })
+  } catch (error) {
+    console.error('Error fetching questions:', error)
+    setQuestionsLoading(false)
+    if (isNetworkError(error)) {
+      toast.error('Connection issue. Retrying...')
     }
   }
+}
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
