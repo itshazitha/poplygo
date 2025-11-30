@@ -1,23 +1,29 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Session, Question } from '@/types'
 import toast from 'react-hot-toast'
 import { withRetry, isNetworkError } from '@/lib/retry'
-import { useOnlineStatus } from '@/hooks/useOnlineStatus' 
+import { useOnlineStatus } from '@/hooks/useOnlineStatus'
+import Pagination from '@/components/Pagination'
+import QuestionSkeleton from '@/components/QuestionSkeleton'
 
 export default function StudentSession() {
   const params = useParams()
   const code = params.code as string
-  const isOnline = useOnlineStatus()  // Actually use the hook here
+  const isOnline = useOnlineStatus()
   
   const [session, setSession] = useState<Session | null>(null)
   const [questions, setQuestions] = useState<Question[]>([])
   const [newQuestion, setNewQuestion] = useState('')
   const [authorName, setAuthorName] = useState('')
   const [loading, setLoading] = useState(false)
+  const [questionsLoading, setQuestionsLoading] = useState(true)
+  const [currentPage, setCurrentPage] = useState(1)
+  
+  const ITEMS_PER_PAGE = 10
 
   useEffect(() => {
     fetchSession()
@@ -26,6 +32,18 @@ export default function StudentSession() {
     const interval = setInterval(fetchQuestions, 3000)
     return () => clearInterval(interval)
   }, [code])
+
+  // Reset to page 1 when questions change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [questions.length])
+
+  // Paginate questions
+  const paginatedQuestions = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
+    const endIndex = startIndex + ITEMS_PER_PAGE
+    return questions.slice(startIndex, endIndex)
+  }, [questions, currentPage])
 
   const fetchSession = async () => {
     try {
@@ -43,6 +61,7 @@ export default function StudentSession() {
   }
 
   const fetchQuestions = async () => {
+    setQuestionsLoading(true)
     try {
       await withRetry(async () => {
         const sessionData = await supabase
@@ -62,6 +81,7 @@ export default function StudentSession() {
           if (error) throw error
           setQuestions(data || [])
         }
+        setQuestionsLoading(false)
       }, {
         maxRetries: 2,
         onRetry: (attempt) => {
@@ -70,6 +90,7 @@ export default function StudentSession() {
       })
     } catch (error) {
       console.error('Error fetching questions:', error)
+      setQuestionsLoading(false)
       if (isNetworkError(error)) {
         toast.error('Connection issue. Retrying...')
       }
@@ -171,7 +192,6 @@ export default function StudentSession() {
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-4xl mx-auto">
-        {/* Offline Warning Banner - ADD THIS */}
         {!isOnline && (
           <div className="mb-4 bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-3 rounded">
             ⚠️ You are offline. Some features may not work.
@@ -233,39 +253,54 @@ export default function StudentSession() {
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-2xl font-bold mb-4">All Questions ({questions.length})</h2>
           
-          {questions.length === 0 ? (
+          {questionsLoading ? (
+            <div className="space-y-4">
+              <QuestionSkeleton />
+              <QuestionSkeleton />
+              <QuestionSkeleton />
+            </div>
+          ) : questions.length === 0 ? (
             <p className="text-gray-500 text-center py-8">No questions yet</p>
           ) : (
-            <div className="space-y-4">
-              {questions.map((question) => {
-                const upvotedQuestions = JSON.parse(
-                  localStorage.getItem('upvoted_questions') || '[]'
-                )
-                const hasUpvoted = upvotedQuestions.includes(question.id)
-                
-                return (
-                  <div key={question.id} className="border border-gray-200 rounded-lg p-4">
-                    <p className="text-lg mb-2">{question.content}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-500">
-                        {question.author_name}
-                      </span>
-                      <button
-                        onClick={() => handleUpvote(question.id, question.upvotes)}
-                        disabled={hasUpvoted || !isOnline}
-                        className={`px-3 py-1 rounded-md text-sm font-medium transition ${
-                          hasUpvoted || !isOnline
-                            ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                            : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
-                        }`}
-                      >
-                        ▲ {question.upvotes} {hasUpvoted && '(Voted)'}
-                      </button>
+            <>
+              <div className="space-y-4">
+                {paginatedQuestions.map((question) => {
+                  const upvotedQuestions = JSON.parse(
+                    localStorage.getItem('upvoted_questions') || '[]'
+                  )
+                  const hasUpvoted = upvotedQuestions.includes(question.id)
+                  
+                  return (
+                    <div key={question.id} className="border border-gray-200 rounded-lg p-4">
+                      <p className="text-lg mb-2">{question.content}</p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-gray-500">
+                          {question.author_name}
+                        </span>
+                        <button
+                          onClick={() => handleUpvote(question.id, question.upvotes)}
+                          disabled={hasUpvoted || !isOnline}
+                          className={`px-3 py-1 rounded-md text-sm font-medium transition ${
+                            hasUpvoted || !isOnline
+                              ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                              : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                          }`}
+                        >
+                          ▲ {question.upvotes} {hasUpvoted && '(Voted)'}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )
-              })}
-            </div>
+                  )
+                })}
+              </div>
+              
+              <Pagination
+                currentPage={currentPage}
+                totalItems={questions.length}
+                itemsPerPage={ITEMS_PER_PAGE}
+                onPageChange={setCurrentPage}
+              />
+            </>
           )}
         </div>
       </div>

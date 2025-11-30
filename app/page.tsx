@@ -1,4 +1,5 @@
-'use client'
+// Remove 'use client' and add revalidate for ISR
+export const revalidate = 3600 // Revalidate every hour (1 hour = 3600 seconds)
 
 import Link from 'next/link'
 

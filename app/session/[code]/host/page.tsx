@@ -1,10 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Session, Question } from '@/types'
-import toast from 'react-hot-toast'  // Add this import
+import toast from 'react-hot-toast'
+import Pagination from '@/components/Pagination'
+import QuestionSkeleton from '@/components/QuestionSkeleton'
 
 export default function HostDashboard() {
   const params = useParams()
@@ -13,6 +15,10 @@ export default function HostDashboard() {
   const [session, setSession] = useState<Session | null>(null)
   const [questions, setQuestions] = useState<Question[]>([])
   const [loading, setLoading] = useState(true)
+  const [questionsLoading, setQuestionsLoading] = useState(true)
+  const [currentPage, setCurrentPage] = useState(1)
+  
+  const ITEMS_PER_PAGE = 10
 
   useEffect(() => {
     fetchSession()
@@ -22,6 +28,18 @@ export default function HostDashboard() {
     const interval = setInterval(fetchQuestions, 3000)
     return () => clearInterval(interval)
   }, [code])
+
+  // Reset to page 1 when questions change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [questions.length])
+
+  // Paginate questions
+  const paginatedQuestions = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
+    const endIndex = startIndex + ITEMS_PER_PAGE
+    return questions.slice(startIndex, endIndex)
+  }, [questions, currentPage])
 
   const fetchSession = async () => {
     try {
@@ -41,6 +59,7 @@ export default function HostDashboard() {
   }
 
   const fetchQuestions = async () => {
+    setQuestionsLoading(true)
     try {
       const sessionData = await supabase
         .from('sessions')
@@ -59,8 +78,10 @@ export default function HostDashboard() {
         if (error) throw error
         setQuestions(data || [])
       }
+      setQuestionsLoading(false)
     } catch (error) {
       console.error('Error fetching questions:', error)
+      setQuestionsLoading(false)
     }
   }
 
@@ -139,26 +160,41 @@ export default function HostDashboard() {
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-2xl font-bold mb-4">Questions ({questions.length})</h2>
           
-          {questions.length === 0 ? (
+          {questionsLoading ? (
+            <div className="space-y-4">
+              <QuestionSkeleton />
+              <QuestionSkeleton />
+              <QuestionSkeleton />
+            </div>
+          ) : questions.length === 0 ? (
             <p className="text-gray-500 text-center py-8">
               No questions yet. Students can join using the code above.
             </p>
           ) : (
-            <div className="space-y-4">
-              {questions.map((question) => (
-                <div key={question.id} className="border border-gray-200 rounded-lg p-4">
-                  <p className="text-lg">{question.content}</p>
-                  <div className="flex items-center justify-between mt-2">
-                    <span className="text-sm text-gray-500">
-                      {question.author_name || 'Anonymous'}
-                    </span>
-                    <span className="text-sm font-medium text-blue-600">
-                      {question.upvotes} upvotes
-                    </span>
+            <>
+              <div className="space-y-4">
+                {paginatedQuestions.map((question) => (
+                  <div key={question.id} className="border border-gray-200 rounded-lg p-4">
+                    <p className="text-lg">{question.content}</p>
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-sm text-gray-500">
+                        {question.author_name || 'Anonymous'}
+                      </span>
+                      <span className="text-sm font-medium text-blue-600">
+                        {question.upvotes} upvotes
+                      </span>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+              
+              <Pagination
+                currentPage={currentPage}
+                totalItems={questions.length}
+                itemsPerPage={ITEMS_PER_PAGE}
+                onPageChange={setCurrentPage}
+              />
+            </>
           )}
         </div>
       </div>
