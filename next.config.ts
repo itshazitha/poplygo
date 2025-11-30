@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Enable static optimization
-  output: 'standalone',
+  // Compress output
+  compress: true,
   
   // Optimize images
   images: {
@@ -10,15 +10,6 @@ const nextConfig: NextConfig = {
     deviceSizes: [640, 750, 828, 1080, 1200],
     imageSizes: [16, 32, 48, 64, 96],
   },
-  
-  // Compress output
-  compress: true,
-  
-  // Optimize fonts
-  optimizeFonts: true,
-  
-  // Enable SWC minification
-  swcMinify: true,
   
   // Cache headers for static assets
   async headers() {

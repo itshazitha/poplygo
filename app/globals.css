@@ -119,4 +119,167 @@
   body {
     @apply bg-background text-foreground;
   }
+  
+  /* Improved focus visibility for accessibility */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-2;
+  }
+  
+  /* Better touch targets for mobile (min 44x44px) */
+  button, a[href], input, textarea, select {
+    @apply min-h-[44px];
+  }
+}
+
+/* ========== POPLYGO CUSTOM COMPONENTS ========== */
+@layer components {
+  /* Primary Button */
+  .btn-primary {
+    @apply bg-primary text-primary-foreground px-6 py-3 rounded-lg font-semibold;
+    @apply hover:opacity-90 active:scale-95;
+    @apply focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply transition-all duration-200;
+    @apply shadow-md hover:shadow-lg;
+  }
+  
+  /* Secondary Button */
+  .btn-secondary {
+    @apply bg-secondary text-secondary-foreground border-2 border-primary px-6 py-3 rounded-lg font-semibold;
+    @apply hover:bg-primary hover:text-primary-foreground;
+    @apply focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply transition-all duration-200;
+  }
+  
+  /* Card Component */
+  .card-enhanced {
+    @apply bg-card rounded-xl shadow-md p-6 border border-border;
+  }
+  
+  /* Input Enhanced - Fixed for Tailwind v4 */
+  .input-enhanced {
+    @apply w-full px-4 py-3 border-2 border-input rounded-lg bg-background;
+    @apply focus:border-primary focus:ring-2 focus:ring-primary;
+    @apply disabled:bg-muted disabled:cursor-not-allowed;
+    @apply transition-all duration-200;
+  }
+  
+  /* Container */
+  .container-responsive {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+}
+
+/* ========== ANIMATIONS ========== */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ========== MOBILE OPTIMIZATIONS ========== */
+@media (max-width: 640px) {
+  h1 { @apply text-3xl; }
+  h2 { @apply text-2xl; }
+  .card-enhanced { @apply p-4; }
+}
+
+/* ========== ACCESSIBILITY ========== */
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  :root {
+    --primary: oklch(0.3 0.1 285);
+    --foreground: oklch(0 0 0);
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+/* Add these new animations */
+@keyframes blob {
+  0% { transform: translate(0px, 0px) scale(1); }
+  33% { transform: translate(30px, -50px) scale(1.1); }
+  66% { transform: translate(-20px, 20px) scale(0.9); }
+  100% { transform: translate(0px, 0px) scale(1); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-20px); }
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+@keyframes gradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-blob {
+  animation: blob 7s infinite;
+}
+
+.animation-delay-2000 {
+  animation-delay: 2s;
+}
+
+.animation-delay-4000 {
+  animation-delay: 4s;
+}
+
+.animation-delay-1000 {
+  animation-delay: 1s;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3s ease-in-out infinite;
+}
+
+.animate-gradient {
+  background-size: 200% 200%;
+  animation: gradient 3s ease infinite;
+}
+
+/* Grid pattern background */
+.bg-grid-pattern {
+  background-image: 
+    linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+  background-size: 50px 50px;
 }
