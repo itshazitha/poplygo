@@ -6,6 +6,8 @@ export interface Session {
   auth_required: boolean
   active: boolean
   created_at: string
+  qa_enabled: boolean
+  announcement: string
 }
 
 export interface Question {
