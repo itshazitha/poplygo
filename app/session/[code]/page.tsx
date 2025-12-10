@@ -8,7 +8,6 @@ import toast from 'react-hot-toast'
 import Link from 'next/link'
 import Logo from '@/components/Logo'
 
-
 type Poll = {
   id: string
   session_id: string
@@ -114,11 +113,6 @@ export default function StudentSession() {
         return
       }
       
-      console.log('Session data:', data)
-      console.log('Announcement:', data.announcement)
-      console.log('QA Enabled:', data.qa_enabled)
-      
-      // Only update state if something changed
       setSession(prevSession => {
         if (!prevSession) return data
         if (prevSession.announcement !== data.announcement || 
@@ -223,13 +217,11 @@ export default function StudentSession() {
     fetchPolls()
     loadLocalData()
 
-    // Fetch questions and polls frequently
     const dataInterval = setInterval(() => {
       fetchQuestions()
       fetchPolls()
     }, 3000)
 
-    // Fetch session data less frequently (every 10 seconds)
     const sessionInterval = setInterval(() => {
       fetchSession()
     }, 10000)
@@ -340,29 +332,30 @@ export default function StudentSession() {
         if (existingVote.option_ids.includes(optionId)) {
           newOptionIds = existingVote.option_ids.filter(id => id !== optionId)
           
-          const { error } = await supabase
-            .from('poll_options')
-            .update({ vote_count: supabase.raw('vote_count - 1') })
-            .eq('id', optionId)
+          const option = poll.options.find(o => o.id === optionId)
+          if (option && option.vote_count > 0) {
+            const { error } = await supabase
+              .from('poll_options')
+              .update({ vote_count: option.vote_count - 1 })
+              .eq('id', optionId)
 
-          if (error) throw error
+            if (error) throw error
+          }
         } else {
           newOptionIds = [...existingVote.option_ids, optionId]
           
-          const { error } = await supabase
-            .from('poll_options')
-            .update({ vote_count: supabase.raw('vote_count + 1') })
-            .eq('id', optionId)
+          const { error } = await supabase.rpc('increment_poll_option_votes', {
+            option_id_input: optionId
+          })
 
           if (error) throw error
         }
       } else {
         newOptionIds = [optionId]
         
-        const { error } = await supabase
-          .from('poll_options')
-          .update({ vote_count: supabase.raw('vote_count + 1') })
-          .eq('id', optionId)
+        const { error } = await supabase.rpc('increment_poll_option_votes', {
+          option_id_input: optionId
+        })
 
         if (error) throw error
       }
@@ -406,13 +399,11 @@ export default function StudentSession() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-100 via-purple-50 to-blue-50 pb-24">
-      {/* Header */}
       <header className="bg-white/90 backdrop-blur-md border-b border-purple-100 sticky top-0 z-50 shadow-sm">
         <div className="container-responsive py-4">
           <div className="flex items-center justify-between">
             <Link href="/" className="flex items-center space-x-3">
               <Logo height={40} />
-
             </Link>
 
             <div className="flex items-center space-x-3">
@@ -427,7 +418,6 @@ export default function StudentSession() {
       </header>
 
       <main className="container-responsive py-8 space-y-6">
-        {/* Announcement Banner */}
         {session && session.announcement && session.announcement.trim() && (
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 animate-fade-in">
             <div className="flex items-start space-x-3">
@@ -442,7 +432,6 @@ export default function StudentSession() {
           </div>
         )}
 
-        {/* Q&A Disabled Banner */}
         {!qaEnabled && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
             <div className="flex items-center space-x-3">
@@ -456,7 +445,6 @@ export default function StudentSession() {
           </div>
         )}
 
-        {/* Tab Navigation */}
         <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 p-2">
           <div className="flex space-x-2">
             <button
@@ -488,10 +476,8 @@ export default function StudentSession() {
           </div>
         </div>
 
-        {/* Questions Tab */}
         {activeTab === 'questions' && (
           <div className="space-y-6 animate-fade-in">
-            {/* Submit Question Card */}
             <div className={`bg-white/80 backdrop-blur-md rounded-xl shadow-lg border overflow-hidden ${
               qaEnabled ? 'border-purple-100' : 'border-gray-200 opacity-60'
             }`}>
@@ -578,7 +564,6 @@ export default function StudentSession() {
               )}
             </div>
 
-            {/* Filter tabs */}
             <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 p-4">
               <div className="flex space-x-2">
                 {(['all', 'newest', 'popular', 'answered'] as const).map((filter) => (
@@ -597,7 +582,6 @@ export default function StudentSession() {
               </div>
             </div>
 
-            {/* Questions list */}
             {filteredQuestions.length === 0 ? (
               <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 p-12 text-center">
                 <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-100 to-blue-100 flex items-center justify-center mx-auto mb-4">
@@ -660,7 +644,6 @@ export default function StudentSession() {
           </div>
         )}
 
-        {/* Polls Tab */}
         {activeTab === 'polls' && (
           <div className="space-y-6 animate-fade-in">
             {polls.length === 0 ? (
@@ -763,7 +746,6 @@ export default function StudentSession() {
         )}
       </main>
 
-      {/* Welcome Modal */}
       {showWelcomeModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 animate-fade-in">
