@@ -17,6 +17,7 @@ export interface Question {
   upvotes: number
   author_name?: string
   created_at: string
+  answered: boolean
 }
 
 export interface Poll {
