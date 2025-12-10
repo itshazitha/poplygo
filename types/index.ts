@@ -19,8 +19,8 @@ export interface Question {
   created_at: string
   answered: boolean
   starred: boolean
+  deleted: boolean
 }
-
 
 export interface Poll {
   id: string
