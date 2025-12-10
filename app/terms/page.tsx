@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import Logo from '@/components/Logo'
 
 export default function TermsOfService() {
   return (
@@ -15,12 +16,8 @@ export default function TermsOfService() {
         {/* Header */}
         <nav className="container-responsive py-6">
           <Link href="/" className="flex items-center space-x-2 w-fit">
-            <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
-              <span className="text-white font-bold text-xl">P</span>
-            </div>
-            <span className="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-              Poplygo
-            </span>
+            <Logo height={40} />
+
           </Link>
         </nav>
 

@@ -113,27 +113,20 @@
 }
 
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
-  }
   body {
     @apply bg-background text-foreground;
   }
   
-  /* Improved focus visibility for accessibility */
   *:focus-visible {
     @apply outline-none ring-2 ring-primary ring-offset-2;
   }
   
-  /* Better touch targets for mobile (min 44x44px) */
   button, a[href], input, textarea, select {
     @apply min-h-[44px];
   }
 }
 
-/* ========== POPLYGO CUSTOM COMPONENTS ========== */
 @layer components {
-  /* Primary Button */
   .btn-primary {
     @apply bg-primary text-primary-foreground px-6 py-3 rounded-lg font-semibold;
     @apply hover:opacity-90 active:scale-95;
@@ -143,7 +136,6 @@
     @apply shadow-md hover:shadow-lg;
   }
   
-  /* Secondary Button */
   .btn-secondary {
     @apply bg-secondary text-secondary-foreground border-2 border-primary px-6 py-3 rounded-lg font-semibold;
     @apply hover:bg-primary hover:text-primary-foreground;
@@ -152,12 +144,22 @@
     @apply transition-all duration-200;
   }
   
-  /* Card Component */
+  .btn-danger {
+    @apply bg-destructive text-white px-6 py-3 rounded-lg font-semibold;
+    @apply hover:opacity-90 active:scale-95;
+    @apply transition-all duration-200;
+  }
+  
+  .btn-ghost {
+    @apply bg-transparent text-foreground px-4 py-2 rounded-lg font-medium;
+    @apply hover:bg-secondary;
+    @apply transition-all duration-200;
+  }
+  
   .card-enhanced {
     @apply bg-card rounded-xl shadow-md p-6 border border-border;
   }
   
-  /* Input Enhanced - Fixed for Tailwind v4 */
   .input-enhanced {
     @apply w-full px-4 py-3 border-2 border-input rounded-lg bg-background;
     @apply focus:border-primary focus:ring-2 focus:ring-primary;
@@ -165,13 +167,28 @@
     @apply transition-all duration-200;
   }
   
-  /* Container */
   .container-responsive {
     @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
   }
+  
+  /* Badge styles */
+  .badge {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold;
+  }
+  
+  .badge-green {
+    @apply bg-green-100 text-green-800;
+  }
+  
+  .badge-purple {
+    @apply bg-purple-100 text-purple-800;
+  }
+  
+  .badge-gray {
+    @apply bg-gray-100 text-gray-800;
+  }
 }
 
-/* ========== ANIMATIONS ========== */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -199,15 +216,12 @@
   animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* ========== MOBILE OPTIMIZATIONS ========== */
 @media (max-width: 640px) {
   h1 { @apply text-3xl; }
   h2 { @apply text-2xl; }
   .card-enhanced { @apply p-4; }
 }
 
-/* ========== ACCESSIBILITY ========== */
-/* High contrast mode support */
 @media (prefers-contrast: high) {
   :root {
     --primary: oklch(0.3 0.1 285);
@@ -215,7 +229,6 @@
   }
 }
 
-/* Reduced motion support */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -223,7 +236,7 @@
     transition-duration: 0.01ms !important;
   }
 }
-/* Add these new animations */
+
 @keyframes blob {
   0% { transform: translate(0px, 0px) scale(1); }
   33% { transform: translate(30px, -50px) scale(1.1); }
@@ -276,7 +289,6 @@
   animation: gradient 3s ease infinite;
 }
 
-/* Grid pattern background */
 .bg-grid-pattern {
   background-image: 
     linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px),

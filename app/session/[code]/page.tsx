@@ -1,15 +1,13 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
-import { useParams } from 'next/navigation'
+import { useEffect, useState, useCallback } from 'react'
+import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Session, Question } from '@/types'
 import toast from 'react-hot-toast'
-import { withRetry, isNetworkError } from '@/lib/retry'
-import { useOnlineStatus } from '@/hooks/useOnlineStatus'
-import Pagination from '@/components/Pagination'
-import QuestionSkeleton from '@/components/QuestionSkeleton'
 import Link from 'next/link'
+import Logo from '@/components/Logo'
+
 
 type Poll = {
   id: string
@@ -33,147 +31,143 @@ type PollOption = {
 
 type PollWithOptions = Poll & { options: PollOption[] }
 
-function questionsChanged(oldQs: Question[], newQs: Question[]): boolean {
-  if (oldQs.length !== newQs.length) return true
-  for (let i = 0; i < oldQs.length; i++) {
-    const a = oldQs[i]
-    const b = newQs[i]
-    if (!b || a.id !== b.id || a.upvotes !== b.upvotes || a.content !== b.content) return true
-  }
-  return false
+type Vote = {
+  poll_id: string
+  option_ids: string[]
 }
 
 export default function StudentSession() {
   const params = useParams()
+  const router = useRouter()
   const code = params.code as string
-  const isOnline = useOnlineStatus()
 
   const [session, setSession] = useState<Session | null>(null)
   const [questions, setQuestions] = useState<Question[]>([])
-  const [newQuestion, setNewQuestion] = useState('')
-  const [authorName, setAuthorName] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [questionsLoading, setQuestionsLoading] = useState(true)
-  const [currentPage, setCurrentPage] = useState(1)
-
   const [polls, setPolls] = useState<PollWithOptions[]>([])
-  const [pollsLoading, setPollsLoading] = useState(true)
-  const [voterId, setVoterId] = useState<string | null>(null)
-  const [votedPolls, setVotedPolls] = useState<Record<string, string[]>>({})
-  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string[]>>({})
-  const [submittingPoll, setSubmittingPoll] = useState<string | null>(null)
+  const [myVotes, setMyVotes] = useState<Vote[]>([])
+  const [upvotedQuestions, setUpvotedQuestions] = useState<string[]>([])
+  
+  // UI state
+  const [activeTab, setActiveTab] = useState<'questions' | 'polls'>('questions')
+  const [submitQuestionExpanded, setSubmitQuestionExpanded] = useState(false)
+  const [questionFilter, setQuestionFilter] = useState<'all' | 'newest' | 'popular' | 'answered'>('all')
+  const [showWelcomeModal, setShowWelcomeModal] = useState(false)
+  const [tempName, setTempName] = useState('')
+  
+  // Submit question state
+  const [newQuestion, setNewQuestion] = useState('')
+  const [authorName, setAuthorName] = useState('Anonymous')
+  const [submitting, setSubmitting] = useState(false)
 
-  const ITEMS_PER_PAGE = 10
+  const loadLocalData = () => {
+    const savedVotes = localStorage.getItem(`poplygo_votes_${code}`)
+    const savedUpvotes = localStorage.getItem(`poplygo_upvotes_${code}`)
 
-  useEffect(() => {
-    let stored = localStorage.getItem('poplygo_voter_id')
-    if (!stored) {
-      stored = crypto.randomUUID()
-      localStorage.setItem('poplygo_voter_id', stored)
-    }
-    setVoterId(stored)
-  }, [])
-
-  useEffect(() => {
-    const storedVotes = localStorage.getItem('poplygo_poll_votes')
-    if (storedVotes) {
+    if (savedVotes) {
       try {
-        setVotedPolls(JSON.parse(storedVotes))
-      } catch {
-        setVotedPolls({})
+        setMyVotes(JSON.parse(savedVotes))
+      } catch (e) {
+        console.error('Error loading votes:', e)
       }
     }
-  }, [])
 
-  useEffect(() => {
-    fetchSession()
-    fetchQuestions()
-    fetchPolls()
+    if (savedUpvotes) {
+      try {
+        setUpvotedQuestions(JSON.parse(savedUpvotes))
+      } catch (e) {
+        console.error('Error loading upvotes:', e)
+      }
+    }
+  }
 
-    const interval = setInterval(() => {
-      fetchQuestions(false)
-      fetchPolls(false)
-    }, 3000)
+  const saveVotes = (votes: Vote[]) => {
+    localStorage.setItem(`poplygo_votes_${code}`, JSON.stringify(votes))
+    setMyVotes(votes)
+  }
 
-    return () => clearInterval(interval)
-  }, [code])
+  const saveUpvotes = (upvotes: string[]) => {
+    localStorage.setItem(`poplygo_upvotes_${code}`, JSON.stringify(upvotes))
+    setUpvotedQuestions(upvotes)
+  }
 
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [questions.length])
+  const handleSaveName = () => {
+    const name = tempName.trim() || 'Anonymous'
+    setAuthorName(name)
+    localStorage.setItem(`poplygo_student_name_${code}`, name)
+    setShowWelcomeModal(false)
+    toast.success(`Welcome, ${name}!`)
+  }
 
-  const paginatedQuestions = useMemo(() => {
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
-    const endIndex = startIndex + ITEMS_PER_PAGE
-    return questions.slice(startIndex, endIndex)
-  }, [questions, currentPage])
-
-  const fetchSession = async () => {
+  const fetchSession = useCallback(async () => {
     try {
-      const { data, error } = await supabase.from('sessions').select('*').eq('code', code).single()
+      const { data, error } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('code', code)
+        .single()
+      
       if (error) throw error
-      setSession(data)
-    } catch (error) {
-      console.error('Error fetching session:', error)
-    }
-  }
-
-  const fetchQuestions = async (showSkeleton = true) => {
-    if (showSkeleton && questions.length === 0) {
-      setQuestionsLoading(true)
-    }
-
-    try {
-      await withRetry(
-        async () => {
-          const sessionData = await supabase.from('sessions').select('id').eq('code', code).single()
-
-          if (sessionData.data) {
-            const { data, error } = await supabase
-              .from('questions')
-              .select('*')
-              .eq('session_id', sessionData.data.id)
-              .eq('deleted', false)
-              .order('upvotes', { ascending: false })
-
-            if (error) throw error
-
-            const newData = data || []
-            if (questionsChanged(questions, newData)) {
-              setQuestions(newData)
-            }
-          }
-          setQuestionsLoading(false)
-        },
-        {
-          maxRetries: 2,
-          onRetry: (attempt) => {
-            console.log(`Retrying fetch questions (attempt ${attempt})`)
-          },
-        }
-      )
-    } catch (error) {
-      console.error('Error fetching questions:', error)
-      setQuestionsLoading(false)
-      if (isNetworkError(error)) {
-        toast.error('Connection issue. Retrying...')
-      }
-    }
-  }
-
-  const fetchPolls = async (showSkeleton = true) => {
-    if (showSkeleton && polls.length === 0) {
-      setPollsLoading(true)
-    }
-
-    try {
-      const sessionData = await supabase.from('sessions').select('id').eq('code', code).single()
-
-      if (!sessionData.data) {
-        setPolls([])
-        setPollsLoading(false)
+      
+      if (!data.active) {
+        toast.error('This session has ended')
+        router.push('/')
         return
       }
+      
+      console.log('Session data:', data)
+      console.log('Announcement:', data.announcement)
+      console.log('QA Enabled:', data.qa_enabled)
+      
+      // Only update state if something changed
+      setSession(prevSession => {
+        if (!prevSession) return data
+        if (prevSession.announcement !== data.announcement || 
+            prevSession.qa_enabled !== data.qa_enabled ||
+            prevSession.active !== data.active) {
+          return data
+        }
+        return prevSession
+      })
+    } catch (error) {
+      console.error('Error fetching session:', error)
+      toast.error('Session not found')
+      router.push('/')
+    }
+  }, [code, router])
+
+  const fetchQuestions = useCallback(async () => {
+    try {
+      const sessionData = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('code', code)
+        .single()
+
+      if (sessionData.data) {
+        const { data, error } = await supabase
+          .from('questions')
+          .select('*')
+          .eq('session_id', sessionData.data.id)
+          .eq('deleted', false)
+          .order('upvotes', { ascending: false })
+
+        if (error) throw error
+        setQuestions(data || [])
+      }
+    } catch (error) {
+      console.error('Error fetching questions:', error)
+    }
+  }, [code])
+
+  const fetchPolls = useCallback(async () => {
+    try {
+      const sessionData = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('code', code)
+        .single()
+
+      if (!sessionData.data) return
 
       const { data: pollsData, error: pollsError } = await supabase
         .from('polls')
@@ -187,7 +181,6 @@ export default function StudentSession() {
       const pollIds = (pollsData || []).map((p) => p.id)
       if (pollIds.length === 0) {
         setPolls([])
-        setPollsLoading(false)
         return
       }
 
@@ -211,613 +204,612 @@ export default function StudentSession() {
       }))
 
       setPolls(combined)
-      setPollsLoading(false)
     } catch (error) {
       console.error('Error fetching polls:', error)
-      setPollsLoading(false)
     }
-  }
+  }, [code])
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  useEffect(() => {
+    const savedName = localStorage.getItem(`poplygo_student_name_${code}`)
+    
+    if (!savedName) {
+      setShowWelcomeModal(true)
+    } else {
+      setAuthorName(savedName)
+    }
+    
+    fetchSession()
+    fetchQuestions()
+    fetchPolls()
+    loadLocalData()
+
+    // Fetch questions and polls frequently
+    const dataInterval = setInterval(() => {
+      fetchQuestions()
+      fetchPolls()
+    }, 3000)
+
+    // Fetch session data less frequently (every 10 seconds)
+    const sessionInterval = setInterval(() => {
+      fetchSession()
+    }, 10000)
+
+    return () => {
+      clearInterval(dataInterval)
+      clearInterval(sessionInterval)
+    }
+  }, [code, fetchSession, fetchQuestions, fetchPolls])
+
+  const handleSubmitQuestion = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (!session?.qa_enabled) {
+      toast.error('Questions are currently disabled by the host')
+      return
+    }
 
     if (!newQuestion.trim()) {
       toast.error('Please enter a question')
       return
     }
 
-    if (newQuestion.length > 500) {
-      toast.error('Question must be less than 500 characters')
-      return
-    }
-
-    setLoading(true)
+    setSubmitting(true)
 
     try {
-      await withRetry(
-        async () => {
-          const sessionData = await supabase.from('sessions').select('id').eq('code', code).single()
+      const sessionData = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('code', code)
+        .single()
 
-          if (!sessionData.data) throw new Error('Session not found')
+      if (!sessionData.data) throw new Error('Session not found')
 
-          const { error } = await supabase.from('questions').insert([
-            {
-              session_id: sessionData.data.id,
-              content: newQuestion.trim(),
-              author_name: authorName.trim() || 'Anonymous',
-              upvotes: 0,
-            },
-          ])
+      const { error } = await supabase
+        .from('questions')
+        .insert([{
+          session_id: sessionData.data.id,
+          content: newQuestion.trim(),
+          author_name: authorName,
+          upvotes: 0,
+          answered: false,
+          starred: false,
+          deleted: false,
+        }])
 
-          if (error) throw error
-        },
-        {
-          maxRetries: 2,
-          onRetry: (attempt) => {
-            toast.loading(`Retrying... (attempt ${attempt})`)
-          },
-        }
-      )
+      if (error) throw error
 
       toast.success('Question submitted!')
       setNewQuestion('')
-      fetchQuestions(false)
+      setSubmitQuestionExpanded(false)
+      fetchQuestions()
     } catch (error) {
       console.error('Error submitting question:', error)
-      toast.error('Failed to submit question. Please try again.')
+      toast.error('Failed to submit question')
     } finally {
-      setLoading(false)
+      setSubmitting(false)
     }
   }
 
   const handleUpvote = async (questionId: string, currentUpvotes: number) => {
-    const upvotedQuestions = JSON.parse(localStorage.getItem('upvoted_questions') || '[]')
-
-    if (upvotedQuestions.includes(questionId)) {
-      toast.error('You already upvoted this question')
-      return
-    }
+    const hasUpvoted = upvotedQuestions.includes(questionId)
 
     try {
+      const newUpvotes = hasUpvoted ? currentUpvotes - 1 : currentUpvotes + 1
+
       const { error } = await supabase
         .from('questions')
-        .update({ upvotes: currentUpvotes + 1 })
+        .update({ upvotes: newUpvotes })
         .eq('id', questionId)
 
       if (error) throw error
 
-      upvotedQuestions.push(questionId)
-      localStorage.setItem('upvoted_questions', JSON.stringify(upvotedQuestions))
+      const newUpvotedList = hasUpvoted
+        ? upvotedQuestions.filter(id => id !== questionId)
+        : [...upvotedQuestions, questionId]
 
-      toast.success('Question upvoted!')
-      fetchQuestions(false)
+      saveUpvotes(newUpvotedList)
+      fetchQuestions()
     } catch (error) {
       console.error('Error upvoting:', error)
-      toast.error('Failed to upvote question')
+      toast.error('Failed to upvote')
     }
   }
 
-  const toggleAnswer = (pollId: string, optionId: string, maxVotes: number, allowMultiple: boolean) => {
-    setSelectedAnswers((prev) => {
-      const currentSelections = prev[pollId] || []
-      
-      if (currentSelections.includes(optionId)) {
-        return {
-          ...prev,
-          [pollId]: currentSelections.filter((id) => id !== optionId),
-        }
+  const handleVote = async (pollId: string, optionId: string, allowMultiple: boolean, maxVotes: number) => {
+    const existingVote = myVotes.find(v => v.poll_id === pollId)
+    
+    if (!allowMultiple) {
+      if (existingVote) {
+        toast.error('You have already voted on this poll')
+        return
       }
-
-      if (!allowMultiple) {
-        return {
-          ...prev,
-          [pollId]: [optionId],
-        }
+    } else {
+      if (existingVote && existingVote.option_ids.length >= maxVotes && !existingVote.option_ids.includes(optionId)) {
+        toast.error(`You can only select up to ${maxVotes} options`)
+        return
       }
-
-      if (currentSelections.length >= maxVotes) {
-        toast.error(`You can select up to ${maxVotes} option${maxVotes > 1 ? 's' : ''}`)
-        return prev
-      }
-
-      return {
-        ...prev,
-        [pollId]: [...currentSelections, optionId],
-      }
-    })
-  }
-
-  const submitVotes = async (poll: PollWithOptions) => {
-    if (!isOnline) {
-      toast.error('You are offline')
-      return
     }
-    if (!voterId) {
-      toast.error('Unable to identify device')
-      return
-    }
-
-    const selections = selectedAnswers[poll.id] || []
-    if (selections.length === 0) {
-      toast.error('Please select at least one option')
-      return
-    }
-
-    setSubmittingPoll(poll.id)
 
     try {
-      for (const optionId of selections) {
-        const { error: insertError } = await supabase.from('poll_votes').insert([
-          {
-            poll_id: poll.id,
-            option_id: optionId,
-            voter_id: voterId,
-          },
-        ])
+      const poll = polls.find(p => p.id === pollId)
+      if (!poll) return
 
-        if (insertError && insertError.code !== '23505') {
-          throw insertError
+      let newOptionIds: string[] = []
+      
+      if (allowMultiple && existingVote) {
+        if (existingVote.option_ids.includes(optionId)) {
+          newOptionIds = existingVote.option_ids.filter(id => id !== optionId)
+          
+          const { error } = await supabase
+            .from('poll_options')
+            .update({ vote_count: supabase.raw('vote_count - 1') })
+            .eq('id', optionId)
+
+          if (error) throw error
+        } else {
+          newOptionIds = [...existingVote.option_ids, optionId]
+          
+          const { error } = await supabase
+            .from('poll_options')
+            .update({ vote_count: supabase.raw('vote_count + 1') })
+            .eq('id', optionId)
+
+          if (error) throw error
         }
+      } else {
+        newOptionIds = [optionId]
+        
+        const { error } = await supabase
+          .from('poll_options')
+          .update({ vote_count: supabase.raw('vote_count + 1') })
+          .eq('id', optionId)
 
-        const { error: updateError } = await supabase.rpc('increment_poll_option_votes', {
-          option_id_input: optionId,
-        })
-
-        if (updateError) throw updateError
+        if (error) throw error
       }
 
-      setVotedPolls((prev) => {
-        const updated = {
-          ...prev,
-          [poll.id]: selections,
-        }
-        localStorage.setItem('poplygo_poll_votes', JSON.stringify(updated))
-        return updated
-      })
+      const newVotes = existingVote
+        ? myVotes.map(v => v.poll_id === pollId ? { poll_id: pollId, option_ids: newOptionIds } : v)
+        : [...myVotes, { poll_id: pollId, option_ids: newOptionIds }]
 
-      setSelectedAnswers((prev) => {
-        const updated = { ...prev }
-        delete updated[poll.id]
-        return updated
-      })
-
-      toast.success('Vote submitted!')
-      fetchPolls(false)
+      saveVotes(newVotes)
+      toast.success('Vote recorded!')
+      fetchPolls()
     } catch (error) {
       console.error('Error voting:', error)
-      toast.error('Failed to submit vote')
-    } finally {
-      setSubmittingPoll(null)
+      toast.error('Failed to vote')
     }
   }
 
-  if (!session) {
+  const filteredQuestions = questions.filter(q => {
+    if (questionFilter === 'answered') return q.answered
+    if (questionFilter === 'newest') return true
+    if (questionFilter === 'popular') return q.upvotes > 0
+    return true
+  }).sort((a, b) => {
+    if (questionFilter === 'newest') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    if (questionFilter === 'popular') return b.upvotes - a.upvotes
+    return b.upvotes - a.upvotes
+  })
+
+  const qaEnabled = session?.qa_enabled ?? true
+
+  if (!session && !showWelcomeModal) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-100 via-purple-50 to-blue-50">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">Loading session...</p>
+          <div className="w-14 h-14 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground font-medium">Loading session...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 relative overflow-hidden">
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 -left-4 w-72 h-72 bg-purple-300 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob" />
-        <div className="absolute top-0 -right-4 w-72 h-72 bg-yellow-300 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000" />
-      </div>
+    <div className="min-h-screen bg-gradient-to-br from-purple-100 via-purple-50 to-blue-50 pb-24">
+      {/* Header */}
+      <header className="bg-white/90 backdrop-blur-md border-b border-purple-100 sticky top-0 z-50 shadow-sm">
+        <div className="container-responsive py-4">
+          <div className="flex items-center justify-between">
+            <Link href="/" className="flex items-center space-x-3">
+              <Logo height={40} />
 
-      <div className="relative z-10">
-        <nav className="container-responsive py-6">
-          <Link href="/" className="flex items-center space-x-2 w-fit">
-            <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
-              <span className="text-white font-bold text-xl">P</span>
-            </div>
-            <span className="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-              Poplygo
-            </span>
-          </Link>
-        </nav>
+            </Link>
 
-        <div className="container-responsive py-8">
-          {!isOnline && (
-            <div className="mb-6 bg-yellow-100 border-2 border-yellow-400 text-yellow-800 px-6 py-4 rounded-xl flex items-center space-x-3">
-              <svg className="w-6 h-6 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <path
-                  fillRule="evenodd"
-                  d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <div>
-                <p className="font-semibold">You are offline</p>
-                <p className="text-sm">Some features may not work until you reconnect</p>
-              </div>
-            </div>
-          )}
-
-          <div className="bg-white/80 backdrop-blur-lg rounded-2xl shadow-2xl p-6 md:p-8 mb-6 border border-white/20">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">{session.title}</h1>
-                <div className="flex items-center space-x-2 text-sm text-gray-500">
-                  <span>Session Code:</span>
-                  <span className="font-mono font-bold text-indigo-600">{code}</span>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2 bg-green-50 px-4 py-2 rounded-full">
-                <span className="relative flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
-                </span>
-                <span className="text-sm font-medium text-green-700">Live</span>
+            <div className="flex items-center space-x-3">
+              {session && <h1 className="text-lg font-bold text-foreground hidden md:block">{session.title}</h1>}
+              <div className="flex items-center space-x-2 px-3 py-1.5 bg-green-50 border border-green-200 rounded-lg">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                <span className="text-sm font-semibold text-green-700">Live</span>
               </div>
             </div>
           </div>
+        </div>
+      </header>
 
-          <div className="grid lg:grid-cols-2 gap-6">
-            <div>
-              <div className="bg-white/80 backdrop-blur-lg rounded-2xl shadow-2xl p-6 md:p-8 mb-6 border border-white/20">
-                <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center space-x-2">
-                  <svg className="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  <span>Submit a Question</span>
-                </h2>
+      <main className="container-responsive py-8 space-y-6">
+        {/* Announcement Banner */}
+        {session && session.announcement && session.announcement.trim() && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 animate-fade-in">
+            <div className="flex items-start space-x-3">
+              <svg className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
+              </svg>
+              <div className="flex-1">
+                <h3 className="text-sm font-bold text-blue-900 mb-1">Announcement</h3>
+                <p className="text-sm text-blue-900 whitespace-pre-wrap">{session.announcement}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
-                <form onSubmit={handleSubmit} className="space-y-5">
-                  <div>
-                    <label htmlFor="name" className="block text-sm font-semibold mb-2 text-gray-700">
-                      Your Name (optional)
-                    </label>
-                    <input
-                      id="name"
-                      type="text"
-                      value={authorName}
-                      onChange={(e) => setAuthorName(e.target.value)}
-                      placeholder="Leave blank to stay anonymous"
-                      className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all duration-200 bg-white/50"
-                    />
+        {/* Q&A Disabled Banner */}
+        {!qaEnabled && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+            <div className="flex items-center space-x-3">
+              <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <p className="text-sm font-medium text-yellow-900">
+                Questions are currently disabled by the host
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Tab Navigation */}
+        <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 p-2">
+          <div className="flex space-x-2">
+            <button
+              onClick={() => setActiveTab('questions')}
+              className={`flex-1 flex items-center justify-center space-x-2 px-4 py-3 rounded-lg font-semibold transition-all ${
+                activeTab === 'questions'
+                  ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg'
+                  : 'text-muted-foreground hover:bg-purple-50'
+              }`}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              <span>Questions</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('polls')}
+              className={`flex-1 flex items-center justify-center space-x-2 px-4 py-3 rounded-lg font-semibold transition-all ${
+                activeTab === 'polls'
+                  ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg'
+                  : 'text-muted-foreground hover:bg-purple-50'
+              }`}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              <span>Polls</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Questions Tab */}
+        {activeTab === 'questions' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* Submit Question Card */}
+            <div className={`bg-white/80 backdrop-blur-md rounded-xl shadow-lg border overflow-hidden ${
+              qaEnabled ? 'border-purple-100' : 'border-gray-200 opacity-60'
+            }`}>
+              <button
+                onClick={() => {
+                  if (!qaEnabled) {
+                    toast.error('Questions are currently disabled')
+                    return
+                  }
+                  setSubmitQuestionExpanded(!submitQuestionExpanded)
+                }}
+                disabled={!qaEnabled}
+                className={`w-full flex items-center justify-between p-5 transition-colors ${
+                  qaEnabled ? 'hover:bg-purple-50/50' : 'cursor-not-allowed'
+                }`}
+              >
+                <div className="flex items-center space-x-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shadow-lg ${
+                    qaEnabled ? 'bg-gradient-to-br from-purple-600 to-blue-600' : 'bg-gray-400'
+                  }`}>
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
                   </div>
+                  <div className="text-left">
+                    <h2 className="text-lg font-bold text-foreground">Submit a Question</h2>
+                    <p className="text-sm text-muted-foreground">
+                      {qaEnabled ? 'Ask anything to the host' : 'Questions are disabled'}
+                    </p>
+                  </div>
+                </div>
+                {qaEnabled && (
+                  <svg 
+                    className={`w-5 h-5 text-muted-foreground transition-transform duration-200 ${submitQuestionExpanded ? 'rotate-180' : ''}`}
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                )}
+              </button>
 
+              {submitQuestionExpanded && qaEnabled && (
+                <form onSubmit={handleSubmitQuestion} className="p-5 border-t space-y-4">
                   <div>
-                    <label htmlFor="question" className="block text-sm font-semibold mb-2 text-gray-700">
+                    <label className="block text-sm font-medium text-foreground mb-2">
                       Your Question <span className="text-red-500">*</span>
                     </label>
                     <textarea
-                      id="question"
                       value={newQuestion}
                       onChange={(e) => setNewQuestion(e.target.value)}
                       placeholder="What would you like to ask?"
                       required
-                      rows={4}
+                      rows={3}
                       maxLength={500}
-                      className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 transition-all duration-200 resize-none bg-white/50"
+                      className="input-enhanced resize-none"
                     />
-                    <p
-                      className={`text-xs mt-2 flex items-center justify-between ${
-                        newQuestion.length > 450 ? 'text-orange-500 font-semibold' : 'text-gray-500'
-                      }`}
-                    >
-                      <span>Express your thoughts clearly</span>
-                      <span>{newQuestion.length}/500</span>
+                    <p className="text-xs text-muted-foreground mt-2 flex justify-between">
+                      <span>Posting as {authorName}</span>
+                      <span className={newQuestion.length > 450 ? 'text-yellow-600' : ''}>
+                        {newQuestion.length}/500
+                      </span>
                     </p>
                   </div>
 
-                  <button
-                    type="submit"
-                    disabled={loading || !isOnline || !newQuestion.trim()}
-                    className="w-full px-6 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl font-semibold shadow-xl hover:shadow-2xl disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 hover:scale-105"
-                  >
-                    {loading ? (
-                      <span className="flex items-center justify-center">
-                        <svg className="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24">
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                            fill="none"
-                          />
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          />
-                        </svg>
-                        Submitting...
-                      </span>
-                    ) : (
-                      <span className="flex items-center justify-center space-x-2">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                        </svg>
-                        <span>Submit Question</span>
-                      </span>
-                    )}
-                  </button>
-                </form>
-              </div>
-
-              <div className="bg-white/80 backdrop-blur-lg rounded-2xl shadow-2xl p-6 md:p-8 border border-white/20">
-                <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center justify-between">
-                  <span className="flex items-center space-x-3">
-                    <span>All Questions</span>
-                    <span className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-sm px-3 py-1 rounded-full">
-                      {questions.length}
-                    </span>
-                  </span>
-                  {questions.length > 0 && (
+                  <div className="flex justify-end space-x-3">
                     <button
-                      onClick={() => fetchQuestions()}
-                      className="text-indigo-600 hover:text-indigo-700 text-sm font-medium flex items-center space-x-1"
+                      type="button"
+                      onClick={() => setSubmitQuestionExpanded(false)}
+                      className="px-4 py-2 text-muted-foreground hover:bg-secondary rounded-lg transition-colors"
                     >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                        />
-                      </svg>
-                      <span>Refresh</span>
+                      Cancel
                     </button>
-                  )}
-                </h2>
-
-                {questionsLoading ? (
-                  <div className="space-y-4">
-                    <QuestionSkeleton />
-                    <QuestionSkeleton />
-                    <QuestionSkeleton />
+                    <button
+                      type="submit"
+                      disabled={submitting || !newQuestion.trim()}
+                      className="btn-primary"
+                    >
+                      {submitting ? 'Submitting...' : 'Submit Question'}
+                    </button>
                   </div>
-                ) : questions.length === 0 ? (
-                  <div className="text-center py-16">
-                    <div className="w-20 h-20 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <svg className="w-10 h-10 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                        />
-                      </svg>
-                    </div>
-                    <p className="text-gray-500 text-lg mb-2">No questions yet</p>
-                    <p className="text-gray-400 text-sm">Be the first to ask something!</p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="space-y-4">
-                      {paginatedQuestions.map((question) => {
-                        const upvotedQuestions = JSON.parse(
-                          localStorage.getItem('upvoted_questions') || '[]'
-                        )
-                        const hasUpvoted = upvotedQuestions.includes(question.id)
+                </form>
+              )}
+            </div>
 
-                        return (
-                          <div
-                            key={question.id}
-                            className="bg-white/60 backdrop-blur-sm border border-gray-200 rounded-xl p-5 hover:shadow-lg transition-all duration-200"
-                          >
-                            <p className="text-lg text-gray-900 mb-3 leading-relaxed">
-                              {question.content}
-                            </p>
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center space-x-2 text-sm text-gray-500">
-                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                  <path
-                                    fillRule="evenodd"
-                                    d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
-                                    clipRule="evenodd"
-                                  />
-                                </svg>
-                                <span>{question.author_name}</span>
-                              </div>
-                              <button
-                                onClick={() => handleUpvote(question.id, question.upvotes)}
-                                disabled={hasUpvoted || !isOnline}
-                                className={`group flex items-center space-x-2 px-4 py-2 rounded-xl font-semibold transition-all duration-200 ${
-                                  hasUpvoted || !isOnline
-                                    ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                                    : 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-lg hover:scale-105'
-                                }`}
-                              >
-                                <svg
-                                  className={`w-5 h-5 ${
-                                    !hasUpvoted && isOnline
-                                      ? 'group-hover:scale-125 transition-transform'
-                                      : ''
-                                  }`}
-                                  fill="currentColor"
-                                  viewBox="0 0 20 20"
-                                >
-                                  <path d="M2 10.5a1.5 1.5 0 113 0v6a1.5 1.5 0 01-3 0v-6zM6 10.333v5.43a2 2 0 001.106 1.79l.05.025A4 4 0 008.943 18h5.416a2 2 0 001.962-1.608l1.2-6A2 2 0 0015.56 8H12V4a2 2 0 00-2-2 1 1 0 00-1 1v.667a4 4 0 01-.8 2.4L6.8 7.933a4 4 0 00-.8 2.4z" />
-                                </svg>
-                                <span>{question.upvotes}</span>
-                                {hasUpvoted && <span className="text-xs">(Voted)</span>}
-                              </button>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-
-                    <Pagination
-                      currentPage={currentPage}
-                      totalItems={questions.length}
-                      itemsPerPage={ITEMS_PER_PAGE}
-                      onPageChange={setCurrentPage}
-                    />
-                  </>
-                )}
+            {/* Filter tabs */}
+            <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 p-4">
+              <div className="flex space-x-2">
+                {(['all', 'newest', 'popular', 'answered'] as const).map((filter) => (
+                  <button
+                    key={filter}
+                    onClick={() => setQuestionFilter(filter)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all ${
+                      questionFilter === filter
+                        ? 'bg-purple-100 text-purple-700'
+                        : 'text-muted-foreground hover:bg-purple-50'
+                    }`}
+                  >
+                    {filter}
+                  </button>
+                ))}
               </div>
             </div>
 
-            <div className="bg-white/80 backdrop-blur-lg rounded-2xl shadow-2xl p-6 md:p-8 border border-white/20">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">Polls</h2>
-
-              {pollsLoading ? (
-                <p className="text-gray-500 text-sm">Loading polls...</p>
-              ) : polls.length === 0 ? (
-                <p className="text-gray-500 text-sm">
-                  No polls yet. Your instructor can create polls for quick feedback.
+            {/* Questions list */}
+            {filteredQuestions.length === 0 ? (
+              <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 p-12 text-center">
+                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-100 to-blue-100 flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-10 h-10 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                </div>
+                <p className="text-lg font-semibold text-foreground mb-2">No questions yet</p>
+                <p className="text-sm text-muted-foreground">
+                  {qaEnabled ? 'Be the first to ask a question!' : 'Questions are currently disabled'}
                 </p>
-              ) : (
-                <div className="space-y-4 max-h-[600px] overflow-y-auto pr-1">
-                  {polls.map((poll) => {
-                    const totalVotes = poll.options.reduce((sum, opt) => sum + opt.vote_count, 0)
-                    const myVotes = votedPolls[poll.id] || []
-                    const hasVoted = myVotes.length > 0
-                    const selections = selectedAnswers[poll.id] || []
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filteredQuestions.map((question) => {
+                  const hasUpvoted = upvotedQuestions.includes(question.id)
 
-                    return (
-                      <div key={poll.id} className="border border-gray-200 rounded-xl p-4 bg-white/70">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <p className="font-semibold text-gray-900">{poll.question}</p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              {poll.allow_multiple_votes
-                                ? `You can vote for up to ${poll.max_votes} option${
-                                    poll.max_votes > 1 ? 's' : ''
-                                  }`
-                                : 'You can vote for 1 option'}
-                            </p>
-                            {!poll.show_results_to_students && (
-                              <p className="text-xs text-amber-600 mt-1 font-medium">
-                                Results hidden by instructor
-                              </p>
-                            )}
-                          </div>
-                          <div className="text-xs font-medium">
-                            {hasVoted ? (
-                              <span className="bg-green-100 text-green-700 px-2 py-1 rounded-full">
-                                ✓ Voted
-                              </span>
-                            ) : (
-                              <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
-                                Not voted
+                  return (
+                    <div
+                      key={question.id}
+                      className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 p-5 hover:border-purple-300 transition-all"
+                    >
+                      <div className="flex items-start gap-4">
+                        <button
+                          onClick={() => handleUpvote(question.id, question.upvotes)}
+                          className={`flex flex-col items-center min-w-[44px] p-2 rounded-lg transition-all ${
+                            hasUpvoted
+                              ? 'bg-purple-100 text-purple-700'
+                              : 'bg-gray-50 text-gray-600 hover:bg-purple-50'
+                          }`}
+                        >
+                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clipRule="evenodd" />
+                          </svg>
+                          <span className="text-sm font-bold mt-1">{question.upvotes}</span>
+                        </button>
+
+                        <div className="flex-1">
+                          <p className="text-base text-foreground mb-3 leading-relaxed font-medium">
+                            {question.content}
+                          </p>
+                          <div className="flex items-center space-x-4 text-sm text-muted-foreground">
+                            <span>{question.author_name}</span>
+                            {question.answered && (
+                              <span className="flex items-center space-x-1 text-green-600">
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                                <span>Answered</span>
                               </span>
                             )}
                           </div>
                         </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
-                        <div className="space-y-2 mt-3">
-                          {poll.options.map((opt) => {
-                            const percentage =
-                              totalVotes === 0 ? 0 : Math.round((opt.vote_count / totalVotes) * 100)
-                            const hasVotedOption = myVotes.includes(opt.id)
-                            const isSelected = selections.includes(opt.id)
-                            const isCorrect = poll.correct_answer_id === opt.id
+        {/* Polls Tab */}
+        {activeTab === 'polls' && (
+          <div className="space-y-6 animate-fade-in">
+            {polls.length === 0 ? (
+              <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 p-12 text-center">
+                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-100 to-blue-100 flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-10 h-10 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                </div>
+                <p className="text-lg font-semibold text-foreground mb-2">No active polls</p>
+                <p className="text-sm text-muted-foreground">
+                  The host hasn't created any polls yet
+                </p>
+              </div>
+            ) : (
+              polls.map((poll) => {
+                const existingVote = myVotes.find(v => v.poll_id === poll.id)
+                const hasVoted = !!existingVote
+                const totalVotes = poll.options.reduce((sum, opt) => sum + opt.vote_count, 0)
+
+                return (
+                  <div key={poll.id} className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 p-6">
+                    <h3 className="text-lg font-bold text-foreground mb-4">{poll.question}</h3>
+
+                    {!hasVoted ? (
+                      <div className="space-y-3">
+                        {poll.options.map((option) => (
+                          <button
+                            key={option.id}
+                            onClick={() => handleVote(poll.id, option.id, poll.allow_multiple_votes, poll.max_votes)}
+                            className="w-full text-left px-4 py-3 border-2 border-purple-200 rounded-lg hover:border-purple-400 hover:bg-purple-50 transition-all"
+                          >
+                            <span className="font-medium text-foreground">{option.option_text}</span>
+                          </button>
+                        ))}
+                        <p className="text-sm text-muted-foreground mt-4">
+                          {poll.allow_multiple_votes 
+                            ? `Select up to ${poll.max_votes} option${poll.max_votes > 1 ? 's' : ''}`
+                            : 'Select one option'
+                          }
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {poll.show_results_to_students ? (
+                          poll.options.map((option) => {
+                            const percentage = totalVotes === 0 ? 0 : Math.round((option.vote_count / totalVotes) * 100)
+                            const voted = existingVote.option_ids.includes(option.id)
+                            const isCorrect = poll.correct_answer_id === option.id
 
                             return (
-                              <button
-                                key={opt.id}
-                                type="button"
-                                onClick={() =>
-                                  !hasVoted &&
-                                  toggleAnswer(poll.id, opt.id, poll.max_votes, poll.allow_multiple_votes)
-                                }
-                                disabled={hasVoted}
-                                className={`w-full text-left text-sm p-3 rounded-xl border-2 transition-all duration-200 ${
-                                  hasVoted && isCorrect
-                                    ? 'border-green-500 bg-green-50'
-                                    : hasVoted && hasVotedOption
-                                    ? 'border-blue-500 bg-blue-50'
-                                    : isSelected
-                                    ? 'border-indigo-500 bg-indigo-50 shadow-md'
-                                    : hasVoted
-                                    ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
-                                    : 'border-gray-200 hover:border-indigo-400 hover:bg-indigo-50 cursor-pointer'
-                                }`}
-                              >
-                                <div className="flex justify-between items-center mb-1">
-                                  <div className="flex items-center space-x-2">
-                                    <span className="font-medium text-gray-900">{opt.option_text}</span>
-                                    {hasVoted && isCorrect && (
-                                      <span className="text-xs bg-green-500 text-white px-2 py-0.5 rounded-full">
+                              <div key={option.id} className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-2 flex-1">
+                                    <span className="font-medium text-foreground">{option.option_text}</span>
+                                    {voted && (
+                                      <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-semibold rounded">
+                                        Your vote
+                                      </span>
+                                    )}
+                                    {isCorrect && (
+                                      <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded">
                                         Correct
                                       </span>
                                     )}
-                                    {isSelected && !hasVoted && (
-                                      <span className="text-xs bg-indigo-500 text-white px-2 py-0.5 rounded-full">
-                                        Selected
-                                      </span>
-                                    )}
                                   </div>
-                                  {poll.show_results_to_students && (
-                                    <span className="text-xs text-gray-500">
-                                      {opt.vote_count} vote{opt.vote_count !== 1 ? 's' : ''} ({percentage}%)
-                                    </span>
-                                  )}
+                                  <span className="text-sm font-semibold text-purple-600">
+                                    {percentage}% ({option.vote_count})
+                                  </span>
                                 </div>
-                                {poll.show_results_to_students && (
-                                  <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                                    <div
-                                      className={`h-2 ${
-                                        isCorrect
-                                          ? 'bg-green-500'
-                                          : hasVotedOption
-                                          ? 'bg-blue-500'
-                                          : 'bg-indigo-400'
-                                      }`}
-                                      style={{ width: `${percentage}%` }}
-                                    />
-                                  </div>
-                                )}
-                              </button>
+                                <div className="w-full bg-purple-100 rounded-full h-2">
+                                  <div
+                                    className="bg-gradient-to-r from-purple-600 to-blue-600 h-2 rounded-full transition-all duration-500"
+                                    style={{ width: `${percentage}%` }}
+                                  />
+                                </div>
+                              </div>
                             )
-                          })}
-                        </div>
-
-                        {!hasVoted && (
-                          <button
-                            onClick={() => submitVotes(poll)}
-                            disabled={selections.length === 0 || submittingPoll === poll.id}
-                            className="w-full mt-3 px-4 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 hover:scale-105"
-                          >
-                            {submittingPoll === poll.id ? (
-                              <span className="flex items-center justify-center">
-                                <svg className="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24">
-                                  <circle
-                                    className="opacity-25"
-                                    cx="12"
-                                    cy="12"
-                                    r="10"
-                                    stroke="currentColor"
-                                    strokeWidth="4"
-                                    fill="none"
-                                  />
-                                  <path
-                                    className="opacity-75"
-                                    fill="currentColor"
-                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                                  />
-                                </svg>
-                                Submitting...
-                              </span>
-                            ) : (
-                              `Submit ${selections.length > 0 ? `(${selections.length} selected)` : 'Vote'}`
-                            )}
-                          </button>
-                        )}
-
-                        {poll.show_results_to_students && (
-                          <p className="text-xs text-gray-400 mt-2">Total votes: {totalVotes}</p>
+                          })
+                        ) : (
+                          <div className="text-center py-8">
+                            <div className="w-16 h-16 rounded-2xl bg-purple-100 flex items-center justify-center mx-auto mb-4">
+                              <svg className="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            </div>
+                            <p className="text-lg font-semibold text-foreground mb-2">Vote recorded!</p>
+                            <p className="text-sm text-muted-foreground">
+                              Results will be shown by the host
+                            </p>
+                          </div>
                         )}
                       </div>
-                    )
-                  })}
-                </div>
-              )}
+                    )}
+                  </div>
+                )
+              })
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* Welcome Modal */}
+      {showWelcomeModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 animate-fade-in">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </div>
+              <h2 className="text-2xl font-bold text-foreground mb-2">Welcome to the Session!</h2>
+              <p className="text-muted-foreground">Enter your name to get started</p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Your Name
+                </label>
+                <input
+                  type="text"
+                  value={tempName}
+                  onChange={(e) => setTempName(e.target.value)}
+                  placeholder="Enter your name (optional)"
+                  className="input-enhanced"
+                  autoFocus
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      handleSaveName()
+                    }
+                  }}
+                />
+                <p className="text-xs text-muted-foreground mt-2">
+                  Leave blank to join as Anonymous
+                </p>
+              </div>
+
+              <button
+                onClick={handleSaveName}
+                className="w-full btn-primary"
+              >
+                Join Session
+              </button>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
