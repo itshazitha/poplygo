@@ -8,7 +8,6 @@ import toast from 'react-hot-toast'
 import Link from 'next/link'
 import Logo from '@/components/Logo'
 
-
 type Poll = {
   id: string
   session_id: string
@@ -47,6 +46,7 @@ export default function HostSession() {
   const [activePollsExpanded, setActivePollsExpanded] = useState(true)
   const [questionFilter, setQuestionFilter] = useState<'all' | 'newest' | 'popular' | 'answered'>('all')
   const [showAnnouncementModal, setShowAnnouncementModal] = useState(false)
+  const [showMobileMenu, setShowMobileMenu] = useState(false)
   
   // Create poll state
   const [newPollQuestion, setNewPollQuestion] = useState('')
@@ -77,7 +77,6 @@ export default function HostSession() {
           return data
         }
         
-        // Only update if something changed
         if (prevSession.qa_enabled !== data.qa_enabled) {
           setQaEnabled(data.qa_enabled ?? true)
         }
@@ -172,13 +171,11 @@ export default function HostSession() {
     fetchQuestions()
     fetchPolls()
 
-    // Fetch questions and polls frequently
     const dataInterval = setInterval(() => {
       fetchQuestions()
       fetchPolls()
     }, 3000)
 
-    // Fetch session data less frequently and NOT when modal is open
     const sessionInterval = setInterval(() => {
       if (!showAnnouncementModal && !createPollExpanded) {
         fetchSession()
@@ -391,33 +388,6 @@ export default function HostSession() {
     }
   }
 
-  const handleClearAllQuestions = async () => {
-    if (!confirm('Are you sure you want to delete all questions?')) return
-
-    try {
-      const sessionData = await supabase
-        .from('sessions')
-        .select('id')
-        .eq('code', code)
-        .single()
-
-      if (!sessionData.data) return
-
-      const { error } = await supabase
-        .from('questions')
-        .update({ deleted: true })
-        .eq('session_id', sessionData.data.id)
-
-      if (error) throw error
-
-      toast.success('All questions cleared')
-      fetchQuestions()
-    } catch (error) {
-      console.error('Error clearing questions:', error)
-      toast.error('Failed to clear questions')
-    }
-  }
-
   const addPollOption = () => {
     if (pollOptions.length < 10) {
       setPollOptions([...pollOptions, ''])
@@ -459,14 +429,13 @@ export default function HostSession() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-100 via-purple-50 to-blue-50 pb-24">
+    <div className="min-h-screen bg-gradient-to-br from-purple-100 via-purple-50 to-blue-50 pb-32 md:pb-24">
       {/* Header */}
       <header className="bg-white/90 backdrop-blur-md border-b border-purple-100 sticky top-0 z-50 shadow-sm">
         <div className="container-responsive py-4">
           <div className="flex items-center justify-between">
             <Link href="/dashboard" className="flex items-center space-x-3">
               <Logo height={40} />
-
             </Link>
 
             <div className="flex items-center space-x-3">
@@ -477,12 +446,6 @@ export default function HostSession() {
               </div>
               <button onClick={handleEndSession} className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-semibold transition-colors">
                 End Session
-              </button>
-              <button className="p-2 hover:bg-secondary rounded-lg transition-colors">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
               </button>
             </div>
           </div>
@@ -539,7 +502,6 @@ export default function HostSession() {
         {/* Questions Tab */}
         {activeTab === 'questions' && (
           <div className="space-y-6 animate-fade-in">
-            {/* Filter tabs */}
             <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 p-4">
               <div className="flex space-x-2">
                 {(['all', 'newest', 'popular', 'answered'] as const).map((filter) => (
@@ -558,7 +520,6 @@ export default function HostSession() {
               </div>
             </div>
 
-            {/* Questions list */}
             {filteredQuestions.length === 0 ? (
               <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 p-12 text-center">
                 <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-purple-100 to-blue-100 flex items-center justify-center mx-auto mb-4">
@@ -657,7 +618,7 @@ export default function HostSession() {
         {/* Polls Tab */}
         {activeTab === 'polls' && (
           <div className="space-y-6 animate-fade-in">
-            {/* Create New Poll */}
+            {/* Create Poll Section */}
             <div className="bg-white/80 backdrop-blur-md rounded-xl shadow-lg border border-purple-100 overflow-hidden">
               <button
                 onClick={() => setCreatePollExpanded(!createPollExpanded)}
@@ -923,16 +884,17 @@ export default function HostSession() {
         )}
       </main>
 
-      {/* Bottom Action Bar */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-purple-100 shadow-2xl z-50">
+      {/* Desktop Bottom Bar - Hidden on Mobile */}
+      <div className="hidden md:block fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-purple-100 shadow-lg z-40">
         <div className="container-responsive py-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4">
+            {/* Create Poll Button - Left */}
             <button
               onClick={() => {
-                setActiveTab('polls')
                 setCreatePollExpanded(true)
+                setActiveTab('polls')
               }}
-              className="flex items-center space-x-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all"
+              className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-xl font-semibold hover:shadow-xl transition-all"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -940,55 +902,166 @@ export default function HostSession() {
               <span>Create New Poll</span>
             </button>
 
-            <div className="flex items-center space-x-3">
+            {/* Right Side Actions */}
+            <div className="flex items-center gap-3">
+              {/* Session Code Button */}
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(code)
                   toast.success('Code copied to clipboard!')
                 }}
-                className="px-4 py-2 bg-white border-2 border-purple-200 rounded-xl hover:border-purple-400 hover:bg-purple-50 transition-all"
+                className="flex flex-col items-center justify-center px-5 py-2.5 bg-white border-2 border-purple-300 rounded-xl hover:border-purple-500 hover:shadow-lg transition-all cursor-pointer"
               >
-                <div className="text-xl font-mono font-bold text-purple-600">{code}</div>
-                <div className="text-xs text-muted-foreground">Session Code</div>
+                <div className="text-xs text-purple-600 font-medium">Session Code</div>
+                <div className="text-xl font-mono font-bold text-purple-700">{code}</div>
               </button>
 
+              {/* Announcement Button */}
               <button
                 onClick={() => setShowAnnouncementModal(true)}
-                className="flex items-center space-x-2 px-4 py-2 bg-white border border-purple-200 text-foreground rounded-lg font-medium hover:bg-purple-50 transition-colors"
+                className="flex items-center gap-2 px-5 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-semibold shadow-md hover:shadow-lg transition-all"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
                 </svg>
                 <span>Announcement</span>
               </button>
 
+              {/* Q&A Toggle Button */}
               <button
                 onClick={handleToggleQA}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-all ${
+                className={`flex items-center gap-3 px-5 py-3 rounded-xl font-semibold shadow-md hover:shadow-lg transition-all ${
                   qaEnabled
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-gray-100 text-gray-700'
+                    ? 'bg-green-500 hover:bg-green-600 text-white'
+                    : 'bg-red-500 hover:bg-red-600 text-white'
                 }`}
               >
-                <span>Toggle QA</span>
-                <div className={`w-12 h-6 rounded-full transition-colors ${qaEnabled ? 'bg-green-500' : 'bg-gray-400'}`}>
-                  <div className={`w-5 h-5 bg-white rounded-full shadow transform transition-transform ${qaEnabled ? 'translate-x-6' : 'translate-x-0.5'} mt-0.5`} />
+                <span>Q&A {qaEnabled ? 'On' : 'Off'}</span>
+                <div className={`w-12 h-6 rounded-full transition-colors ${
+                  qaEnabled ? 'bg-green-700' : 'bg-red-700'
+                }`}>
+                  <div 
+                    className="w-5 h-5 bg-white rounded-full shadow transform transition-transform mt-0.5"
+                    style={{
+                      transform: qaEnabled ? 'translateX(24px)' : 'translateX(2px)'
+                    }}
+                  />
                 </div>
-              </button>
-
-              <button
-                onClick={handleClearAllQuestions}
-                className="flex items-center space-x-2 px-4 py-2 bg-red-50 text-red-600 rounded-lg font-medium hover:bg-red-100 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-                <span>Clear All Questions</span>
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Mobile Menu Button - Fixed Bottom Right */}
+      <button
+        onClick={() => setShowMobileMenu(true)}
+        className="md:hidden fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-full shadow-2xl flex items-center justify-center z-50 hover:scale-110 transition-transform"
+      >
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+
+      {/* Mobile Side Panel */}
+      {showMobileMenu && (
+        <>
+          {/* Overlay */}
+          <div 
+            className="md:hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
+            onClick={() => setShowMobileMenu(false)}
+          />
+          
+          {/* Side Panel */}
+          <div className="md:hidden fixed top-0 right-0 bottom-0 w-80 bg-white shadow-2xl z-50 overflow-y-auto animate-slide-in-right">
+            <div className="p-6 space-y-4">
+              {/* Header */}
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-foreground">Actions</h2>
+                <button
+                  onClick={() => setShowMobileMenu(false)}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Session Code */}
+              <div 
+                onClick={() => {
+                  navigator.clipboard.writeText(code)
+                  toast.success('Code copied!')
+                }}
+                className="p-4 bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200 rounded-xl cursor-pointer active:scale-95 transition-transform"
+              >
+                <div className="text-sm text-purple-600 font-medium mb-1">Session Code</div>
+                <div className="text-3xl font-mono font-bold text-purple-700">{code}</div>
+              </div>
+
+              {/* Create Poll */}
+              <button
+                onClick={() => {
+                  setCreatePollExpanded(true)
+                  setActiveTab('polls')
+                  setShowMobileMenu(false)
+                }}
+                className="w-full flex items-center gap-3 p-4 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-xl font-semibold shadow-lg active:scale-95 transition-transform"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                <span>Create New Poll</span>
+              </button>
+
+              {/* Announcement */}
+              <button
+                onClick={() => {
+                  setShowAnnouncementModal(true)
+                  setShowMobileMenu(false)
+                }}
+                className="w-full flex items-center gap-3 p-4 bg-blue-500 text-white rounded-xl font-semibold shadow-lg active:scale-95 transition-transform"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
+                </svg>
+                <span>Send Announcement</span>
+              </button>
+
+              {/* Toggle Q&A */}
+              <button
+                onClick={() => {
+                  handleToggleQA()
+                  setShowMobileMenu(false)
+                }}
+                className={`w-full flex items-center justify-between p-4 rounded-xl font-semibold shadow-lg active:scale-95 transition-all ${
+                  qaEnabled
+                    ? 'bg-green-500 text-white'
+                    : 'bg-red-500 text-white'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  <span>Q&A {qaEnabled ? 'Enabled' : 'Disabled'}</span>
+                </div>
+                <div className={`w-12 h-6 rounded-full transition-colors ${
+                  qaEnabled ? 'bg-green-700' : 'bg-red-700'
+                }`}>
+                  <div 
+                    className="w-5 h-5 bg-white rounded-full shadow transform transition-transform mt-0.5"
+                    style={{
+                      transform: qaEnabled ? 'translateX(24px)' : 'translateX(2px)'
+                    }}
+                  />
+                </div>
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Announcement Modal */}
       {showAnnouncementModal && (
